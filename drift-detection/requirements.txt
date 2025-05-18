@@ -1,6 +1,0 @@
-requests
-msal
-deepdiff
-streamlit
-azure-identity
-azure-mgmt-resource
