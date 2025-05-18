@@ -16,8 +16,8 @@ This repository contains two services:
 1. Clone the repository:
 
 ```bash
-git clone <repository-url>
-cd <repository-directory>
+git clone <https://github.com/Gahdloot/savannah-tech-drift-detection/settings/access>
+
 ```
 
 2. Create environment file:
