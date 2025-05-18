@@ -4,7 +4,7 @@ from src.compare import compare_snapshots
 from src.notifier import send_teams_alert
 from config import settings
 
-webhook_url = "https://outlook.office.com/webhook/your-webhook-url"  # Replace with your Teams webhook
+webhook_url = "https://micfosoft.office.com/webhook/jjko-jjok-jjok"  
 
 if __name__ == "__main__":
     files = sorted(glob(f"{settings.SNAPSHOT_DIR}users_*.json"))
