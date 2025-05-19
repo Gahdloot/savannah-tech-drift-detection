@@ -1,303 +1,167 @@
-from datetime import datetime
-from typing import Dict, List, Any, Optional
-import json
-import logging
-from pathlib import Path
-import asyncio
-from azure.identity import DefaultAzureCredential
-from azure.mgmt.resource import ResourceManagementClient
-from azure.mgmt.monitor import MonitorManagementClient
-from azure.mgmt.security import SecurityCenter
-from azure.mgmt.authorization import AuthorizationManagementClient
+"""Main drift detection module for Azure resources."""
 
-logging.basicConfig(level=logging.INFO)
+from typing import Dict, Any, Optional
+import logging
+from datetime import datetime
+import uuid
+from .azure_client import AzureClientManager
+from .resource_collector import ResourceCollector
+from .snapshot import SnapshotManager
+from .drift_report import DriftReportManager
+from .drift_analyzer import DriftAnalyzer
+
 logger = logging.getLogger(__name__)
 
 class DriftDetector:
-    def __init__(self, subscription_id: str, resource_group: str):
-        self.subscription_id = subscription_id
-        self.resource_group = resource_group
-        self.credential = DefaultAzureCredential()
-        self.resource_client = ResourceManagementClient(self.credential, subscription_id)
-        self.monitor_client = MonitorManagementClient(self.credential, subscription_id)
-        self.security_client = SecurityCenter(self.credential, subscription_id)
-        self.auth_client = AuthorizationManagementClient(self.credential, subscription_id)
+    """Main class for detecting configuration drift in Azure resources."""
+
+    def __init__(self, subscription_id: str, resource_group: str,
+                 tenant_id: Optional[str] = None, client_id: Optional[str] = None,
+                 client_secret: Optional[str] = None, data_dir: str = "data"):
+        """Initialize the drift detector.
         
-        # Initialize storage paths
-        self.base_path = Path("data")
-        self.snapshots_path = self.base_path / "snapshots"
-        self.drift_path = self.base_path / "drift"
-        self._setup_storage()
+        Args:
+            subscription_id: Azure subscription ID
+            resource_group: Azure resource group name
+            tenant_id: Azure tenant ID (optional)
+            client_id: Azure client ID (optional)
+            client_secret: Azure client secret (optional)
+            data_dir: Directory for storing snapshots and reports
+        """
+        self.azure_client = AzureClientManager(
+            subscription_id=subscription_id,
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret
+        )
+        self.resource_collector = ResourceCollector(
+            subscription_id=subscription_id,
+            resource_group=resource_group
+        )
+        self.snapshot_manager = SnapshotManager(data_dir)
+        self.drift_report_manager = DriftReportManager(data_dir)
+        self.drift_analyzer = DriftAnalyzer()
+        self.resource_group = resource_group
 
-    def _setup_storage(self):
-        """Create necessary directories for storing snapshots and drift data."""
-        self.snapshots_path.mkdir(parents=True, exist_ok=True)
-        self.drift_path.mkdir(parents=True, exist_ok=True)
-
-    async def collect_configuration(self) -> Dict[str, Any]:
-        """Collect current configuration from Azure resources."""
+    def collect_configuration(self) -> Dict[str, Any]:
+        """Collect current configuration of Azure resources.
+        
+        Returns:
+            Dict[str, Any]: Configuration snapshot
+        """
         try:
-            config = {
+            # Collect all resource configurations
+            resources = self.resource_collector.collect_all_resources()
+            
+            # Create snapshot
+            snapshot = {
+                "id": str(uuid.uuid4()),
                 "timestamp": datetime.utcnow().isoformat(),
-                "subscription_id": self.subscription_id,
+                "subscription_id": self.azure_client.subscription_id,
                 "resource_group": self.resource_group,
-                "resources": await self._collect_resources(),
-                "security_settings": await self._collect_security_settings(),
-                "rbac_assignments": await self._collect_rbac_assignments(),
-                "monitoring_settings": await self._collect_monitoring_settings()
+                "resources": resources
             }
-            return config
+            
+            # Save snapshot
+            self.snapshot_manager.save_snapshot(snapshot)
+            
+            return snapshot
         except Exception as e:
-            logger.error(f"Error collecting configuration: {str(e)}")
+            logger.error(f"Error collecting configuration: {e}")
             raise
 
-    async def _collect_resources(self) -> List[Dict[str, Any]]:
-        """Collect all resources in the resource group."""
-        resources = []
+    def detect_drift(self) -> Dict[str, Any]:
+        """Detect drift between current and previous configurations.
+        
+        Returns:
+            Dict[str, Any]: Drift detection report
+        """
         try:
-            for resource in self.resource_client.resources.list_by_resource_group(self.resource_group):
-                resource_dict = {
-                    "id": resource.id,
-                    "name": resource.name,
-                    "type": resource.type,
-                    "location": resource.location,
-                    "tags": resource.tags,
-                    "properties": resource.properties
+            # Get current configuration
+            current_snapshot = self.collect_configuration()
+            
+            # Get previous snapshot
+            previous_snapshot = self.snapshot_manager.get_latest_snapshot()
+            if not previous_snapshot:
+                return {
+                    "has_drift": False,
+                    "message": "No previous snapshot available for comparison"
                 }
-                resources.append(resource_dict)
-        except Exception as e:
-            logger.error(f"Error collecting resources: {str(e)}")
-        return resources
-
-    async def _collect_security_settings(self) -> Dict[str, Any]:
-        """Collect security-related settings and configurations."""
-        security_settings = {}
-        try:
-            # Collect security center policies
-            policies = self.security_client.policies.list()
-            security_settings["policies"] = [policy.as_dict() for policy in policies]
-
-            # Collect security assessments
-            assessments = self.security_client.assessments.list()
-            security_settings["assessments"] = [assessment.as_dict() for assessment in assessments]
-        except Exception as e:
-            logger.error(f"Error collecting security settings: {str(e)}")
-        return security_settings
-
-    async def _collect_rbac_assignments(self) -> List[Dict[str, Any]]:
-        """Collect RBAC role assignments."""
-        assignments = []
-        try:
-            for assignment in self.auth_client.role_assignments.list():
-                assignment_dict = {
-                    "id": assignment.id,
-                    "name": assignment.name,
-                    "type": assignment.type,
-                    "principal_id": assignment.principal_id,
-                    "role_definition_id": assignment.role_definition_id,
-                    "scope": assignment.scope
-                }
-                assignments.append(assignment_dict)
-        except Exception as e:
-            logger.error(f"Error collecting RBAC assignments: {str(e)}")
-        return assignments
-
-    async def _collect_monitoring_settings(self) -> Dict[str, Any]:
-        """Collect monitoring and logging settings."""
-        monitoring_settings = {}
-        try:
-            # Collect diagnostic settings
-            diagnostic_settings = self.monitor_client.diagnostic_settings.list(
-                resource_uri=f"/subscriptions/{self.subscription_id}/resourceGroups/{self.resource_group}"
+            
+            # Analyze drift
+            drift_report = self.drift_analyzer.analyze_snapshot_drift(
+                current_snapshot,
+                previous_snapshot
             )
-            monitoring_settings["diagnostic_settings"] = [setting.as_dict() for setting in diagnostic_settings]
-
-            # Collect alert rules
-            alert_rules = self.monitor_client.alert_rules.list_by_resource_group(self.resource_group)
-            monitoring_settings["alert_rules"] = [rule.as_dict() for rule in alert_rules]
+            
+            # Save drift report
+            if drift_report.get("has_drift"):
+                self.drift_report_manager.save_report(drift_report)
+            
+            return drift_report
         except Exception as e:
-            logger.error(f"Error collecting monitoring settings: {str(e)}")
-        return monitoring_settings
-
-    def save_snapshot(self, config: Dict[str, Any]) -> str:
-        """Save the current configuration as a snapshot."""
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        filename = f"snapshot_{timestamp}.json"
-        filepath = self.snapshots_path / filename
-        
-        with open(filepath, 'w') as f:
-            json.dump(config, f, indent=2)
-        
-        return filename
-
-    def detect_drift(self, current_config: Dict[str, Any], previous_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Detect configuration drift between two snapshots."""
-        drift = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "changes": {
-                "resources": self._compare_resources(
-                    current_config.get("resources", []),
-                    previous_config.get("resources", [])
-                ),
-                "security_settings": self._compare_security_settings(
-                    current_config.get("security_settings", {}),
-                    previous_config.get("security_settings", {})
-                ),
-                "rbac_assignments": self._compare_rbac_assignments(
-                    current_config.get("rbac_assignments", []),
-                    previous_config.get("rbac_assignments", [])
-                ),
-                "monitoring_settings": self._compare_monitoring_settings(
-                    current_config.get("monitoring_settings", {}),
-                    previous_config.get("monitoring_settings", {})
-                )
-            }
-        }
-        
-        # Save drift report
-        self._save_drift_report(drift)
-        return drift
-
-    def _compare_resources(self, current: List[Dict], previous: List[Dict]) -> Dict[str, Any]:
-        """Compare resource configurations."""
-        changes = {
-            "added": [],
-            "removed": [],
-            "modified": []
-        }
-        
-        current_dict = {r["id"]: r for r in current}
-        previous_dict = {r["id"]: r for r in previous}
-        
-        # Find added and modified resources
-        for resource_id, resource in current_dict.items():
-            if resource_id not in previous_dict:
-                changes["added"].append(resource)
-            elif resource != previous_dict[resource_id]:
-                changes["modified"].append({
-                    "id": resource_id,
-                    "previous": previous_dict[resource_id],
-                    "current": resource
-                })
-        
-        # Find removed resources
-        for resource_id, resource in previous_dict.items():
-            if resource_id not in current_dict:
-                changes["removed"].append(resource)
-        
-        return changes
-
-    def _compare_security_settings(self, current: Dict, previous: Dict) -> Dict[str, Any]:
-        """Compare security settings."""
-        changes = {
-            "policies": self._compare_dicts(current.get("policies", {}), previous.get("policies", {})),
-            "assessments": self._compare_dicts(current.get("assessments", {}), previous.get("assessments", {}))
-        }
-        return changes
-
-    def _compare_rbac_assignments(self, current: List[Dict], previous: List[Dict]) -> Dict[str, Any]:
-        """Compare RBAC assignments."""
-        changes = {
-            "added": [],
-            "removed": [],
-            "modified": []
-        }
-        
-        current_dict = {a["id"]: a for a in current}
-        previous_dict = {a["id"]: a for a in previous}
-        
-        # Find added and modified assignments
-        for assignment_id, assignment in current_dict.items():
-            if assignment_id not in previous_dict:
-                changes["added"].append(assignment)
-            elif assignment != previous_dict[assignment_id]:
-                changes["modified"].append({
-                    "id": assignment_id,
-                    "previous": previous_dict[assignment_id],
-                    "current": assignment
-                })
-        
-        # Find removed assignments
-        for assignment_id, assignment in previous_dict.items():
-            if assignment_id not in current_dict:
-                changes["removed"].append(assignment)
-        
-        return changes
-
-    def _compare_monitoring_settings(self, current: Dict, previous: Dict) -> Dict[str, Any]:
-        """Compare monitoring settings."""
-        changes = {
-            "diagnostic_settings": self._compare_dicts(
-                current.get("diagnostic_settings", {}),
-                previous.get("diagnostic_settings", {})
-            ),
-            "alert_rules": self._compare_dicts(
-                current.get("alert_rules", {}),
-                previous.get("alert_rules", {})
-            )
-        }
-        return changes
-
-    def _compare_dicts(self, current: Dict, previous: Dict) -> Dict[str, Any]:
-        """Compare two dictionaries and return changes."""
-        changes = {
-            "added": {},
-            "removed": {},
-            "modified": {}
-        }
-        
-        # Find added and modified items
-        for key, value in current.items():
-            if key not in previous:
-                changes["added"][key] = value
-            elif value != previous[key]:
-                changes["modified"][key] = {
-                    "previous": previous[key],
-                    "current": value
-                }
-        
-        # Find removed items
-        for key, value in previous.items():
-            if key not in current:
-                changes["removed"][key] = value
-        
-        return changes
-
-    def _save_drift_report(self, drift: Dict[str, Any]) -> None:
-        """Save the drift report to a file."""
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        filename = f"drift_report_{timestamp}.json"
-        filepath = self.drift_path / filename
-        
-        with open(filepath, 'w') as f:
-            json.dump(drift, f, indent=2)
-        
-        logger.info(f"Drift report saved to {filepath}")
+            logger.error(f"Error detecting drift: {e}")
+            raise
 
     def get_latest_snapshot(self) -> Optional[Dict[str, Any]]:
-        """Get the most recent configuration snapshot."""
-        try:
-            snapshots = list(self.snapshots_path.glob("snapshot_*.json"))
-            if not snapshots:
-                return None
-            
-            latest_snapshot = max(snapshots, key=lambda x: x.stat().st_mtime)
-            with open(latest_snapshot, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Error getting latest snapshot: {str(e)}")
-            return None
+        """Get the latest configuration snapshot.
+        
+        Returns:
+            Optional[Dict[str, Any]]: Latest snapshot or None if not found
+        """
+        return self.snapshot_manager.get_latest_snapshot()
 
     def get_latest_drift_report(self) -> Optional[Dict[str, Any]]:
-        """Get the most recent drift report."""
-        try:
-            drift_reports = list(self.drift_path.glob("drift_report_*.json"))
-            if not drift_reports:
-                return None
+        """Get the latest drift detection report.
+        
+        Returns:
+            Optional[Dict[str, Any]]: Latest drift report or None if not found
+        """
+        return self.drift_report_manager.get_latest_report()
+
+    def cleanup_old_data(self, days: int = 30) -> Dict[str, int]:
+        """Clean up old snapshots and drift reports.
+        
+        Args:
+            days: Number of days to keep data
             
-            latest_report = max(drift_reports, key=lambda x: x.stat().st_mtime)
-            with open(latest_report, 'r') as f:
-                return json.load(f)
+        Returns:
+            Dict[str, int]: Number of files deleted by type
+        """
+        try:
+            snapshots_deleted = self.snapshot_manager.cleanup_old_snapshots(days)
+            reports_deleted = self.drift_report_manager.cleanup_old_reports(days)
+            
+            return {
+                "snapshots_deleted": snapshots_deleted,
+                "reports_deleted": reports_deleted
+            }
         except Exception as e:
-            logger.error(f"Error getting latest drift report: {str(e)}")
-            return None 
+            logger.error(f"Error cleaning up old data: {e}")
+            raise
+
+    def get_drift_summary(self) -> Dict[str, Any]:
+        """Get a summary of the latest drift detection.
+        
+        Returns:
+            Dict[str, Any]: Drift summary
+        """
+        try:
+            latest_report = self.get_latest_drift_report()
+            if not latest_report:
+                return {
+                    "has_drift": False,
+                    "message": "No drift reports available"
+                }
+            
+            return self.drift_analyzer.get_drift_summary(latest_report)
+        except Exception as e:
+            logger.error(f"Error getting drift summary: {e}")
+            raise
+
+    def close(self):
+        """Clean up resources."""
+        try:
+            self.azure_client.close()
+        except Exception as e:
+            logger.error(f"Error closing Azure client: {e}") 
