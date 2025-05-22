@@ -1,144 +1,175 @@
-# Azure Drift Detection Service Architecture
+# Azure Drift Detection Architecture
 
 ## Overview
 
-The Azure Drift Detection Service is designed to monitor and detect configuration changes in Azure resources. It provides a comprehensive solution for tracking configuration drift and maintaining infrastructure consistency.
+The Azure Drift Detection system is designed to monitor and detect configuration changes in Azure resources. The system uses a modular architecture with the following key components:
 
-## System Components
+## Core Components
 
-### 1. Core Components
+### 1. Drift Detector
 
-#### DriftDetector
+- Main component responsible for detecting configuration changes
+- Manages the drift detection workflow
+- Coordinates between different components
 
-- Main component responsible for configuration collection and drift detection
-- Handles Azure resource monitoring and comparison
-- Manages snapshots and drift reports
+### 2. Resource Collector
 
-#### API Service
+- Collects current state of Azure resources
+- Supports multiple resource types
+- Handles Azure API interactions
 
-- FastAPI-based REST API
-- Exposes endpoints for drift detection operations
-- Handles authentication and authorization
+### 3. Snapshot Management
 
-### 2. Data Storage
+- Stores configuration snapshots in MongoDB
+- Manages snapshot lifecycle
+- Provides historical data access
 
-#### Snapshots
+### 4. Drift Analysis
 
-- JSON-based configuration snapshots
-- Stored in `data/snapshots` directory
-- Contains current state of Azure resources
+- Analyzes configuration changes
+- Generates drift reports
+- Identifies drift patterns
 
-#### Drift Reports
+## Data Storage
 
-- JSON-based drift detection reports
-- Stored in `data/drift` directory
-- Contains detected changes and drift analysis
+### MongoDB Integration
 
-### 3. External Dependencies
+The system uses MongoDB for storing snapshots and drift reports:
 
-#### Azure Services
+#### Collections
 
-- Azure Resource Manager
-- Azure Monitor
-- Azure Security Center
-- Azure RBAC
+1. **Snapshots Collection**
 
-#### Redis
+   - Stores configuration snapshots
+   - Indexed by timestamp and ID
+   - Contains resource configurations
 
-- Used for caching and session management
-- Improves performance and reduces Azure API calls
+2. **Drift Reports Collection**
+   - Stores drift detection results
+   - Indexed by timestamp and snapshot ID
+   - Contains drift analysis data
 
-## Data Flow
+#### Data Models
+
+1. **Snapshot Document**
+
+```json
+{
+  "_id": "uuid",
+  "timestamp": "ISO-8601 timestamp",
+  "subscription_id": "Azure subscription ID",
+  "resource_group": "Resource group name",
+  "resources": {
+    "resource_type": {
+      "resource_id": {
+        "properties": {}
+      }
+    }
+  }
+}
+```
+
+2. **Drift Report Document**
+
+```json
+{
+  "_id": "uuid",
+  "timestamp": "ISO-8601 timestamp",
+  "snapshot_id": "Reference to snapshot",
+  "has_drift": true,
+  "drifts": [
+    {
+      "resource_type": "string",
+      "resource_id": "string",
+      "changes": [
+        {
+          "property": "string",
+          "old_value": "any",
+          "new_value": "any"
+        }
+      ]
+    }
+  ]
+}
+```
+
+## API Layer
+
+### FastAPI Application
+
+- RESTful API endpoints
+- Async request handling
+- Background task processing
+
+### Endpoints
+
+- `/initialize`: Initialize drift detector
+- `/collect`: Collect current configuration
+- `/latest-snapshot`: Get latest snapshot
+- `/latest-drift`: Get latest drift report
+- `/health`: Health check endpoint
+
+## Background Tasks
+
+### Task Types
 
 1. **Configuration Collection**
 
-   - Periodic polling of Azure resources
-   - Collection of current configuration state
-   - Storage of configuration snapshots
+   - Regular resource state collection
+   - Background snapshot creation
 
 2. **Drift Detection**
 
-   - Comparison of current and previous snapshots
-   - Analysis of configuration changes
-   - Generation of drift reports
+   - Asynchronous drift analysis
+   - Report generation
 
-3. **API Interaction**
-   - Client requests through REST API
-   - Authentication and authorization
-   - Response with drift information
+3. **Maintenance Tasks**
+   - Data cleanup
+   - Index maintenance
 
-## Security Architecture
+## Security
 
 ### Authentication
 
 - Azure AD integration
 - Service principal authentication
-- Token-based access control
+- API key management
 
 ### Authorization
 
 - Role-based access control
 - Resource-level permissions
-- API endpoint security
+- API endpoint protection
 
-### Data Protection
+## Monitoring
 
-- Encrypted storage
-- Secure communication
-- Audit logging
+### Metrics
 
-## Scalability
-
-### Horizontal Scaling
-
-- Stateless API design
-- Redis-based session management
-- Load balancing support
-
-### Performance Optimization
-
-- Caching mechanisms
-- Asynchronous operations
-- Batch processing
-
-## Monitoring and Logging
-
-### Health Monitoring
-
-- Service health checks
-- Resource availability monitoring
+- Drift detection metrics
 - Performance metrics
+- Resource usage metrics
 
 ### Logging
 
-- Application logs
-- Audit trails
+- Structured logging
 - Error tracking
+- Audit logging
 
-## Deployment Architecture
+## Deployment
 
-### Containerization
+### Requirements
 
-- Docker-based deployment
-- Container orchestration support
-- Environment isolation
+- Python 3.8+
+- MongoDB 4.4+
+- Azure subscription
+- Required environment variables:
+  ```
+  MONGODB_URL=mongodb://localhost:27017
+  MONGODB_DB_NAME=azure_drift
+  ```
 
-### Configuration Management
+### Configuration
 
 - Environment-based configuration
-- Secret management
-- Feature flags
-
-## Integration Points
-
-### Azure Integration
-
-- Resource Manager API
-- Monitor API
-- Security Center API
-
-### External Systems
-
-- Monitoring systems
-- Alerting systems
-- Reporting tools
+- MongoDB connection settings
+- Azure credentials

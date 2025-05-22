@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    gcc \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
@@ -24,5 +24,5 @@ ENV PYTHONUNBUFFERED=1
 # Expose port
 EXPOSE 8000
 
-# Run the application
-CMD ["python", "-m", "src.api.main"] 
+# Default command (can be overridden by docker-compose)
+CMD ["celery", "-A", "src.core.tasks", "worker", "--loglevel=info"] 
