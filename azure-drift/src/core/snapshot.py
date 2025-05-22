@@ -1,29 +1,27 @@
 """Snapshot management module for Azure resource configuration snapshots."""
 
-import os
-import json
 import uuid
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import logging
+from .db.mongodb import MongoDBManager
 
 logger = logging.getLogger(__name__)
 
 class SnapshotManager:
     """Manages Azure resource configuration snapshots."""
 
-    def __init__(self, data_dir: str):
+    def __init__(self, db_manager: MongoDBManager):
         """Initialize the snapshot manager.
         
         Args:
-            data_dir: Base directory for storing snapshots
+            db_manager: MongoDB connection manager
         """
-        self.data_dir = data_dir
-        self.snapshots_dir = os.path.join(data_dir, "snapshots")
-        os.makedirs(self.snapshots_dir, exist_ok=True)
+        self.db_manager = db_manager
+        self.collection = db_manager.get_collection("snapshots")
 
-    def save_snapshot(self, snapshot_data: Dict[str, Any]) -> str:
-        """Save a configuration snapshot to disk.
+    async def save_snapshot(self, snapshot_data: Dict[str, Any]) -> str:
+        """Save a configuration snapshot to MongoDB.
         
         Args:
             snapshot_data: The snapshot data to save
@@ -32,18 +30,15 @@ class SnapshotManager:
             str: The ID of the saved snapshot
         """
         snapshot_id = str(uuid.uuid4())
-        snapshot_data["id"] = snapshot_id
+        snapshot_data["_id"] = snapshot_id
         snapshot_data["timestamp"] = datetime.utcnow().isoformat()
         
-        file_path = os.path.join(self.snapshots_dir, f"{snapshot_id}.json")
-        with open(file_path, 'w') as f:
-            json.dump(snapshot_data, f, indent=2)
-        
+        await self.collection.insert_one(snapshot_data)
         logger.info(f"Saved snapshot {snapshot_id}")
         return snapshot_id
 
-    def load_snapshot(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
-        """Load a snapshot from disk.
+    async def load_snapshot(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
+        """Load a snapshot from MongoDB.
         
         Args:
             snapshot_id: The ID of the snapshot to load
@@ -51,64 +46,56 @@ class SnapshotManager:
         Returns:
             Optional[Dict[str, Any]]: The loaded snapshot data or None if not found
         """
-        file_path = os.path.join(self.snapshots_dir, f"{snapshot_id}.json")
         try:
-            with open(file_path, 'r') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            logger.warning(f"Snapshot {snapshot_id} not found")
+            snapshot = await self.collection.find_one({"_id": snapshot_id})
+            return snapshot
+        except Exception as e:
+            logger.warning(f"Error loading snapshot {snapshot_id}: {e}")
             return None
 
-    def get_latest_snapshot(self) -> Optional[Dict[str, Any]]:
+    async def get_latest_snapshot(self) -> Optional[Dict[str, Any]]:
         """Get the most recent snapshot.
         
         Returns:
             Optional[Dict[str, Any]]: The latest snapshot data or None if no snapshots exist
         """
         try:
-            snapshots = [f for f in os.listdir(self.snapshots_dir) if f.endswith('.json')]
-            if not snapshots:
-                return None
-            
-            # Sort by timestamp in filename
-            latest_file = max(snapshots, key=lambda x: os.path.getctime(os.path.join(self.snapshots_dir, x)))
-            return self.load_snapshot(latest_file.replace('.json', ''))
+            snapshot = await self.collection.find_one(
+                sort=[("timestamp", -1)]
+            )
+            return snapshot
         except Exception as e:
             logger.error(f"Error getting latest snapshot: {e}")
             return None
 
-    def list_snapshots(self, limit: int = 10) -> list[Dict[str, Any]]:
+    async def list_snapshots(self, limit: int = 10) -> List[Dict[str, Any]]:
         """List recent snapshots.
         
         Args:
             limit: Maximum number of snapshots to return
             
         Returns:
-            list[Dict[str, Any]]: List of snapshot metadata
+            List[Dict[str, Any]]: List of snapshot metadata
         """
         try:
-            snapshots = []
-            for filename in os.listdir(self.snapshots_dir):
-                if not filename.endswith('.json'):
-                    continue
-                
-                file_path = os.path.join(self.snapshots_dir, filename)
-                with open(file_path, 'r') as f:
-                    data = json.load(f)
-                    snapshots.append({
-                        "id": data["id"],
-                        "timestamp": data["timestamp"],
-                        "resource_count": sum(len(resources) for resources in data["resources"].values())
-                    })
+            cursor = self.collection.find(
+                {},
+                {"_id": 1, "timestamp": 1, "resources": 1}
+            ).sort("timestamp", -1).limit(limit)
             
-            # Sort by timestamp descending
-            snapshots.sort(key=lambda x: x["timestamp"], reverse=True)
-            return snapshots[:limit]
+            snapshots = []
+            async for doc in cursor:
+                snapshots.append({
+                    "id": doc["_id"],
+                    "timestamp": doc["timestamp"],
+                    "resource_count": sum(len(resources) for resources in doc["resources"].values())
+                })
+            return snapshots
         except Exception as e:
             logger.error(f"Error listing snapshots: {e}")
             return []
 
-    def delete_snapshot(self, snapshot_id: str) -> bool:
+    async def delete_snapshot(self, snapshot_id: str) -> bool:
         """Delete a snapshot.
         
         Args:
@@ -118,9 +105,8 @@ class SnapshotManager:
             bool: True if deletion was successful
         """
         try:
-            file_path = os.path.join(self.snapshots_dir, f"{snapshot_id}.json")
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            result = await self.collection.delete_one({"_id": snapshot_id})
+            if result.deleted_count > 0:
                 logger.info(f"Deleted snapshot {snapshot_id}")
                 return True
             return False
@@ -128,7 +114,7 @@ class SnapshotManager:
             logger.error(f"Error deleting snapshot {snapshot_id}: {e}")
             return False
 
-    def cleanup_old_snapshots(self, days: int = 30) -> int:
+    async def cleanup_old_snapshots(self, days: int = 30) -> int:
         """Remove snapshots older than specified days.
         
         Args:
@@ -138,18 +124,11 @@ class SnapshotManager:
             int: Number of snapshots deleted
         """
         try:
-            count = 0
             cutoff = datetime.utcnow().timestamp() - (days * 24 * 60 * 60)
-            
-            for filename in os.listdir(self.snapshots_dir):
-                if not filename.endswith('.json'):
-                    continue
-                
-                file_path = os.path.join(self.snapshots_dir, filename)
-                if os.path.getctime(file_path) < cutoff:
-                    os.remove(file_path)
-                    count += 1
-            
+            result = await self.collection.delete_many({
+                "timestamp": {"$lt": datetime.fromtimestamp(cutoff).isoformat()}
+            })
+            count = result.deleted_count
             logger.info(f"Cleaned up {count} old snapshots")
             return count
         except Exception as e:

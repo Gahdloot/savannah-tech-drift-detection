@@ -8,12 +8,21 @@ import asyncio
 import logging
 from pathlib import Path
 import json
+import os
 
 from ..core.drift_detector import DriftDetector
+from ..core.db.mongodb import MongoDBManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# MongoDB configuration
+MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+DB_NAME = os.getenv("MONGODB_DB_NAME", "azure_drift")
+
+# Initialize MongoDB connection
+db_manager = MongoDBManager(MONGODB_URL, DB_NAME)
 
 app = FastAPI(
     title="Azure Drift Detection API",
@@ -43,6 +52,16 @@ class DriftReport(BaseModel):
 # Global drift detector instance
 drift_detector: Optional[DriftDetector] = None
 
+@app.on_event("startup")
+async def startup_event():
+    """Initialize MongoDB connection on startup."""
+    await db_manager.connect()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close MongoDB connection on shutdown."""
+    await db_manager.close()
+
 async def get_drift_detector() -> DriftDetector:
     """Dependency to get or create drift detector instance."""
     global drift_detector
@@ -55,7 +74,11 @@ async def initialize_drift_detector(request: DriftDetectionRequest):
     """Initialize the drift detector with subscription and resource group."""
     global drift_detector
     try:
-        drift_detector = DriftDetector(request.subscription_id, request.resource_group)
+        drift_detector = DriftDetector(
+            request.subscription_id,
+            request.resource_group,
+            db_manager=db_manager
+        )
         return {"message": "Drift detector initialized successfully"}
     except Exception as e:
         logger.error(f"Error initializing drift detector: {str(e)}")
@@ -69,14 +92,14 @@ async def collect_configuration(
     """Collect current configuration and save as snapshot."""
     try:
         config = await detector.collect_configuration()
-        snapshot_file = detector.save_snapshot(config)
+        snapshot_id = await detector.save_snapshot(config)
         
         # Compare with previous snapshot in background
         background_tasks.add_task(compare_with_previous, detector, config)
         
         return {
             "message": "Configuration collected successfully",
-            "snapshot_file": snapshot_file
+            "snapshot_id": snapshot_id
         }
     except Exception as e:
         logger.error(f"Error collecting configuration: {str(e)}")
@@ -85,9 +108,9 @@ async def collect_configuration(
 async def compare_with_previous(detector: DriftDetector, current_config: Dict[str, Any]):
     """Compare current configuration with previous snapshot."""
     try:
-        previous_config = detector.get_latest_snapshot()
+        previous_config = await detector.get_latest_snapshot()
         if previous_config:
-            drift = detector.detect_drift(current_config, previous_config)
+            drift = await detector.detect_drift(current_config, previous_config)
             logger.info("Drift detection completed")
     except Exception as e:
         logger.error(f"Error comparing configurations: {str(e)}")
@@ -98,7 +121,7 @@ async def get_latest_snapshot(
 ):
     """Get the most recent configuration snapshot."""
     try:
-        snapshot = detector.get_latest_snapshot()
+        snapshot = await detector.get_latest_snapshot()
         if not snapshot:
             raise HTTPException(status_code=404, detail="No snapshots found")
         return snapshot
@@ -112,7 +135,7 @@ async def get_latest_drift(
 ):
     """Get the most recent drift report."""
     try:
-        drift_report = detector.get_latest_drift_report()
+        drift_report = await detector.get_latest_drift_report()
         if not drift_report:
             raise HTTPException(status_code=404, detail="No drift reports found")
         return drift_report
