@@ -19,8 +19,7 @@ logger = logging.getLogger(__name__)
 class AzureClientManager:
     """Manages Azure client connections and authentication."""
 
-    def __init__(self, subscription_id: str, tenant_id: Optional[str] = None,
-                 client_id: Optional[str] = None, client_secret: Optional[str] = None):
+    def __init__(self, subscription_id: str, tenant_id: str = None, client_id: str = None, client_secret: str = None):
         """Initialize the Azure client manager.
         
         Args:
@@ -30,6 +29,9 @@ class AzureClientManager:
             client_secret: Azure client secret (optional)
         """
         self.subscription_id = subscription_id
+        self.tenant_id = tenant_id
+        self.client_id = client_id
+        self.client_secret = client_secret
         self.credential = self._get_credential(tenant_id, client_id, client_secret)
         self.clients: Dict[str, Any] = {}
 

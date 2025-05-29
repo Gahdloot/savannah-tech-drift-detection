@@ -46,12 +46,16 @@ services:
       - DRIFT_MAX_REPORTS=1000
       - ALLOWED_ORIGINS=*
       - MAX_REQUESTS_PER_MINUTE=60
+      - REDIS_URL=redis://redis:6379/0
+      - MONGODB_URL=mongodb://mongodb:27017
+      - MONGODB_DB_NAME=azure_drift
     volumes:
       - azure_drift_data:/app/data
     networks:
       - app-network
     depends_on:
       - redis
+      - mongodb
     restart: unless-stopped
 
   redis:
@@ -64,10 +68,79 @@ services:
       - app-network
     restart: unless-stopped
 
+  mongodb:
+    image: mongo:4.4
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  celery-worker:
+    build:
+      context: ./azure-drift
+      dockerfile: Dockerfile
+    command: celery -A src.core.tasks worker --loglevel=info
+    environment:
+      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
+      - AZURE_RESOURCE_GROUP=${AZURE_RESOURCE_GROUP}
+      - REDIS_URL=redis://redis:6379/0
+      - MONGODB_URL=mongodb://mongodb:27017
+      - MONGODB_DB_NAME=azure_drift
+    networks:
+      - app-network
+    depends_on:
+      - redis
+      - mongodb
+    restart: unless-stopped
+
+  celery-beat:
+    build:
+      context: ./azure-drift
+      dockerfile: Dockerfile
+    command: celery -A src.core.tasks beat --loglevel=info
+    environment:
+      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
+      - AZURE_RESOURCE_GROUP=${AZURE_RESOURCE_GROUP}
+      - REDIS_URL=redis://redis:6379/0
+      - MONGODB_URL=mongodb://mongodb:27017
+      - MONGODB_DB_NAME=azure_drift
+    networks:
+      - app-network
+    depends_on:
+      - redis
+      - mongodb
+    restart: unless-stopped
+
+  flower:
+    build:
+      context: ./azure-drift
+      dockerfile: Dockerfile
+    command: celery -A src.core.tasks flower --port=5555
+    ports:
+      - "5555:5555"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    networks:
+      - app-network
+    depends_on:
+      - redis
+      - celery-worker
+    restart: unless-stopped
+
 volumes:
   secure_auth_data:
   azure_drift_data:
   redis_data:
+  mongodb_data:
 
 networks:
   app-network:

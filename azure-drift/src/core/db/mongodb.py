@@ -50,6 +50,6 @@ class MongoDBManager:
         Returns:
             Collection: MongoDB collection
         """
-        if not self.db:
+        if self.db is None:
             raise RuntimeError("Database connection not established")
         return self.db[collection_name] 

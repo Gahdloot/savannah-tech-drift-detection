@@ -1,7 +1,7 @@
 azure-identity>=1.7.0
 azure-mgmt-monitor>=3.0.0
 azure-mgmt-resource>=20.0.0
-azure-mgmt-graphrbac==0.61.1
+# azure-mgmt-graphrbac
 azure-mgmt-authorization>=0.52.0
 azure-mgmt-keyvault>=8.0.0
 azure-mgmt-compute>=25.0.0
@@ -15,7 +15,7 @@ azure-mgmt-cosmosdb>=6.0.0
 azure-mgmt-dns>=8.0.0
 azure-mgmt-redis>=13.0.0
 azure-mgmt-cdn>=12.0.0
-azure-mgmt-appservice==2.0.0
+# azure-mgmt-appservice==2.0.0
 azure-mgmt-loganalytics>=0.7.0
 azure-mgmt-security>=0.3.0
 azure-mgmt-privatedns>=1.0.0
@@ -43,7 +43,7 @@ azure-mgmt-eventgrid==10.0.0
 azure-mgmt-eventhub>=9.0.0
 azure-mgmt-hdinsight>=8.0.0
 azure-mgmt-iotcentral>=4.0.0
-azure-mgmt-iotspaces>=0.2.0
+# azure-mgmt-iotspaces>=0.2.0
 azure-mgmt-logic>=6.0.0
 azure-mgmt-machinelearningservices>=0.1.0
 azure-mgmt-media>=2.0.0
@@ -63,9 +63,9 @@ azure-mgmt-storagecache>=0.2.0
 azure-mgmt-storagesync>=0.2.0
 azure-mgmt-subscription>=0.6.0
 azure-mgmt-timeseriesinsights>=0.2.0
-azure-mgmt-vmwarecloudsimple>=1.0.0
+# azure-mgmt-vmwarecloudsimple>=1.0.0
 azure-mgmt-webpubsub>=0.2.0
-azure-mgmt-workloadmonitor>=0.2.0
+# azure-mgmt-workloadmonitor>=0.2.0
 msal==1.25.0
 python-dotenv>=0.19.0
 fastapi>=0.68.0
@@ -101,4 +101,5 @@ structlog==23.1.0
 motor>=3.1.1
 pymongo>=4.3.3
 celery>=5.3.0
-redis>=4.5.0 
+redis>=4.5.0
+deepdiff==6.3.0 

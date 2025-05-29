@@ -52,7 +52,7 @@ class DriftDetector:
         """
         try:
             # Collect all resource configurations
-            resources = await self.resource_collector.collect_all_resources()
+            resources = self.resource_collector.collect_resources()
             
             # Create snapshot
             snapshot = {

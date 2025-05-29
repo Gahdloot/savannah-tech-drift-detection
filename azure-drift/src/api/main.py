@@ -151,5 +151,26 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat()
     }
 
+@app.post("/api/v1/drift/check")
+async def check_drift(
+    background_tasks: BackgroundTasks,
+    detector: DriftDetector = Depends(get_drift_detector)
+):
+    """Trigger a manual drift check."""
+    try:
+        config = await detector.collect_configuration()
+        snapshot_id = await detector.save_snapshot(config)
+        
+        # Compare with previous snapshot in background
+        background_tasks.add_task(compare_with_previous, detector, config)
+        
+        return {
+            "message": "Drift check triggered successfully",
+            "snapshot_id": snapshot_id
+        }
+    except Exception as e:
+        logger.error(f"Error triggering drift check: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 
